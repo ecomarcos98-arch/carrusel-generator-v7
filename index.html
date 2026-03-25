@@ -935,12 +935,17 @@ ART STYLE:
 - NO floating symbols, NO dollar signs, NO random icons
 - The illustration must go edge-to-edge, filling every pixel of the canvas
 
+COMPOSITION:
+- Place the main subject (character's face and upper body) in the UPPER HALF or CENTER of the image
+- The BOTTOM 25% of the image should be slightly less detailed or darker — it will have text overlaid by software
+- Do NOT place important visual details (faces, hands, key objects) in the bottom quarter
+
 ${expertContext}
 
 CRITICAL RULES:
-1. ABSOLUTELY NO TEXT of any kind in the image. No words, no letters, no numbers, no labels, no captions, no titles, no watermarks. ZERO TEXT.
-2. The illustration MUST fill 100% of the image. Do NOT create any solid-color zones, headers, footers, banners, or reserved empty areas. Every part of the image should be part of the illustration.
-3. Do NOT split the image into zones or sections. It is ONE continuous illustration filling the entire square.`;
+1. ABSOLUTELY NO TEXT of any kind. No words, letters, numbers, labels, captions, titles, or watermarks. ZERO TEXT.
+2. The illustration MUST fill 100% of the image. No solid-color zones, headers, footers, or banners.
+3. ONE continuous illustration filling the entire square — no splits or sections.`;
 
   const parts = [{ text: prompt }];
 
@@ -994,8 +999,10 @@ CRITICAL RULES:
 
 // ===== CANVAS COMPOSITING =====
 // Nano Banana generates illustration only, Canvas adds text on top
+// slideNum 1 = hook (centered), slideNum 2+ = bottom
 
-function composeSlideImage(imageData, text) {
+function composeSlideImage(imageData, text, slideNum) {
+  slideNum = slideNum || 2; // default to bottom if not specified
   return new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
@@ -1008,24 +1015,37 @@ function composeSlideImage(imageData, text) {
       // 1. Draw the full AI illustration
       ctx.drawImage(img, 0, 0, size, size);
 
-      // 2. Parse text for keywords: *word* becomes yellow highlighted
-      const segments = parseKeywords(text);
+      // 2. Force ALL UPPERCASE, then parse *keywords* for yellow
+      const upperText = text.toUpperCase();
+      const segments = parseKeywords(upperText);
 
-      // 3. Measure text to determine gradient area (at TOP)
-      const textLayout = calculateTextLayout(ctx, segments, size);
+      // 3. Calculate layout: slide 1 centered, rest at bottom
+      const isHook = (slideNum === 1);
+      const textLayout = calculateTextLayout(ctx, segments, size, isHook);
 
-      // 4. Add dark gradient behind text area at TOP
-      const gradientTop = 0;
-      const gradientBottom = Math.min(size, textLayout.bottom + 50);
-      const gradient = ctx.createLinearGradient(0, gradientTop, 0, gradientBottom);
-      gradient.addColorStop(0, 'rgba(0, 0, 0, 0.6)');
-      gradient.addColorStop(0.7, 'rgba(0, 0, 0, 0.45)');
-      gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
-      ctx.fillStyle = gradient;
-      ctx.fillRect(0, gradientTop, size, gradientBottom);
+      // 4. Dark gradient only behind the text
+      let gTop, gBot, grad;
+      if (isHook) {
+        gTop = Math.max(0, textLayout.top - 50);
+        gBot = Math.min(size, textLayout.bottom + 50);
+        grad = ctx.createLinearGradient(0, gTop, 0, gBot);
+        grad.addColorStop(0, 'rgba(0,0,0,0)');
+        grad.addColorStop(0.12, 'rgba(0,0,0,0.5)');
+        grad.addColorStop(0.88, 'rgba(0,0,0,0.5)');
+        grad.addColorStop(1, 'rgba(0,0,0,0)');
+      } else {
+        gTop = Math.max(0, textLayout.top - 60);
+        gBot = size;
+        grad = ctx.createLinearGradient(0, gTop, 0, gBot);
+        grad.addColorStop(0, 'rgba(0,0,0,0)');
+        grad.addColorStop(0.2, 'rgba(0,0,0,0.5)');
+        grad.addColorStop(1, 'rgba(0,0,0,0.7)');
+      }
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, gTop, size, gBot - gTop);
 
-      // 5. Render text with keyword highlighting
-      renderText(ctx, textLayout);
+      // 5. Render text
+      renderText(ctx, textLayout, size);
 
       resolve(canvas.toDataURL('image/png'));
     };
@@ -1033,155 +1053,118 @@ function composeSlideImage(imageData, text) {
   });
 }
 
-// Parse *keyword* syntax into segments: [{text, highlight:bool}]
+// Parse *keyword* → yellow highlight segments
 function parseKeywords(text) {
   const segments = [];
   const regex = /\*([^*]+)\*/g;
   let lastIndex = 0;
   let match;
-
   while ((match = regex.exec(text)) !== null) {
-    if (match.index > lastIndex) {
+    if (match.index > lastIndex)
       segments.push({ text: text.slice(lastIndex, match.index), highlight: false });
-    }
-    segments.push({ text: match[1].toUpperCase(), highlight: true });
+    segments.push({ text: match[1], highlight: true });
     lastIndex = regex.lastIndex;
   }
-  if (lastIndex < text.length) {
+  if (lastIndex < text.length)
     segments.push({ text: text.slice(lastIndex), highlight: false });
-  }
-  if (segments.length === 0) {
+  if (segments.length === 0)
     segments.push({ text, highlight: false });
-  }
   return segments;
 }
 
-// Flatten segments into plain text for wrapping calculations
-function segmentsToPlainText(segments) {
-  return segments.map(s => s.text).join('');
-}
-
-function calculateTextLayout(ctx, segments, canvasSize) {
-  const padding = 50;
+function calculateTextLayout(ctx, segments, canvasSize, isHook) {
+  const padding = 55;
   const maxWidth = canvasSize - (padding * 2);
-  const plainText = segmentsToPlainText(segments);
 
-  // Auto-size: start big, shrink until it fits
-  let fontSize = 78;
-  const minFontSize = 32;
+  // Smaller font: hook slightly bigger, rest smaller
+  let fontSize = isHook ? 58 : 48;
+  const minFontSize = 24;
   let lines = [];
 
   while (fontSize >= minFontSize) {
     ctx.font = `900 ${fontSize}px Arial, Helvetica, sans-serif`;
     lines = wrapSegments(ctx, segments, maxWidth);
-    const lineHeight = fontSize * 1.25;
+    const lineHeight = fontSize * 1.28;
     const totalHeight = lines.length * lineHeight;
-    if (totalHeight <= canvasSize * 0.45) break;
+    if (totalHeight <= canvasSize * 0.32) break;
     fontSize -= 2;
   }
 
-  const lineHeight = fontSize * 1.25;
+  const lineHeight = fontSize * 1.28;
   const totalHeight = lines.length * lineHeight;
+  let startY;
 
-  // Position text at TOP with padding
-  const startY = padding + fontSize;
+  if (isHook) {
+    // Vertically centered
+    startY = (canvasSize - totalHeight) / 2 + fontSize * 0.85;
+  } else {
+    // Anchored to bottom
+    const bottomPad = 50;
+    startY = canvasSize - bottomPad - totalHeight + fontSize * 0.85;
+  }
 
   return {
-    lines,
-    fontSize,
-    lineHeight,
-    padding,
-    startY,
-    top: padding,
+    lines, fontSize, lineHeight, padding, startY, isHook,
+    top: startY - fontSize,
     bottom: startY + (lines.length - 1) * lineHeight + fontSize * 0.3
   };
 }
 
-// Word-wrap that preserves segment highlight info per word
+// Word-wrap preserving highlight info per word
 function wrapSegments(ctx, segments, maxWidth) {
-  // Flatten into words with their highlight status
   const words = [];
   for (const seg of segments) {
-    const segWords = seg.text.split(' ').filter(w => w.length > 0);
-    segWords.forEach((w, i) => {
-      words.push({ text: w, highlight: seg.highlight, addSpace: i > 0 || words.length > 0 });
+    seg.text.split(' ').filter(w => w.length > 0).forEach(w => {
+      words.push({ text: w, highlight: seg.highlight });
     });
   }
 
-  const lines = []; // each line is array of {text, highlight}
-  let currentLine = [];
-  let currentWidth = 0;
+  const lines = [];
+  let curLine = [];
+  let curWidth = 0;
 
   for (const word of words) {
-    const prefix = currentLine.length > 0 ? ' ' : '';
-    const testWidth = ctx.measureText(prefix + word.text).width;
-
-    if (currentWidth + testWidth > maxWidth && currentLine.length > 0) {
-      lines.push(currentLine);
-      currentLine = [{ text: word.text, highlight: word.highlight }];
-      currentWidth = ctx.measureText(word.text).width;
+    const prefix = curLine.length > 0 ? ' ' : '';
+    const testW = ctx.measureText(prefix + word.text).width;
+    if (curWidth + testW > maxWidth && curLine.length > 0) {
+      lines.push(curLine);
+      curLine = [{ text: word.text, highlight: word.highlight }];
+      curWidth = ctx.measureText(word.text).width;
     } else {
-      if (currentLine.length > 0) {
-        currentLine.push({ text: ' ' + word.text, highlight: word.highlight });
-      } else {
-        currentLine.push({ text: word.text, highlight: word.highlight });
-      }
-      currentWidth += testWidth;
+      curLine.push({ text: (curLine.length > 0 ? ' ' : '') + word.text, highlight: word.highlight });
+      curWidth += testW;
     }
   }
-  if (currentLine.length > 0) lines.push(currentLine);
+  if (curLine.length > 0) lines.push(curLine);
   return lines;
 }
 
-function renderText(ctx, layout) {
-  const { lines, fontSize, lineHeight, padding, startY } = layout;
-
+// Render text: horizontally CENTERED, white + yellow highlights, black stroke
+function renderText(ctx, layout, canvasSize) {
+  const { lines, fontSize, lineHeight, startY } = layout;
   ctx.font = `900 ${fontSize}px Arial, Helvetica, sans-serif`;
-  ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
   ctx.lineJoin = 'round';
   ctx.miterLimit = 2;
-
-  const strokeWidth = Math.max(fontSize * 0.12, 4);
+  const strokeW = Math.max(fontSize * 0.12, 4);
 
   lines.forEach((lineSegments, i) => {
-    let x = padding;
+    // Calculate total line width for centering
+    const fullText = lineSegments.map(s => s.text).join('');
+    const totalWidth = ctx.measureText(fullText).width;
+    let x = (canvasSize - totalWidth) / 2;
     const y = startY + (i * lineHeight);
 
     for (const seg of lineSegments) {
-      const segWidth = ctx.measureText(seg.text).width;
-
-      // Black stroke
+      const segW = ctx.measureText(seg.text).width;
       ctx.strokeStyle = 'black';
-      ctx.lineWidth = strokeWidth;
+      ctx.lineWidth = strokeW;
       ctx.strokeText(seg.text, x, y);
-
-      // Fill: yellow for highlighted, white for normal
       ctx.fillStyle = seg.highlight ? '#ffd166' : 'white';
       ctx.fillText(seg.text, x, y);
-
-      x += segWidth;
+      x += segW;
     }
   });
-}
-
-// Legacy wrapText kept for compatibility
-function wrapText(ctx, text, maxWidth) {
-  const words = text.split(' ');
-  const lines = [];
-  let currentLine = '';
-  for (const word of words) {
-    const testLine = currentLine ? `${currentLine} ${word}` : word;
-    const metrics = ctx.measureText(testLine);
-    if (metrics.width > maxWidth && currentLine) {
-      lines.push(currentLine);
-      currentLine = word;
-    } else {
-      currentLine = testLine;
-    }
-  }
-  if (currentLine) lines.push(currentLine);
-  return lines;
 }
 
 // ===== CARD HELPERS =====
@@ -1212,7 +1195,7 @@ function createSlideCard(num, slide, state) {
 }
 
 function updateSlideCard(card, num, slide, imageData) {
-  composeSlideImage(imageData, slide.texto).then(composedDataUrl => {
+  composeSlideImage(imageData, slide.texto, num).then(composedDataUrl => {
     const container = card.querySelector('.slide-image-container');
     container.innerHTML = `<img src="${composedDataUrl}" alt="Slide ${num}" />`;
 
@@ -1318,7 +1301,7 @@ async function editSlide(num) {
       imgData.data = newImageData;
 
       // Recompose with text overlay
-      const composedUrl = await composeSlideImage(newImageData, imgData.slide.texto);
+      const composedUrl = await composeSlideImage(newImageData, imgData.slide.texto, num);
       imgData.composedUrl = composedUrl;
 
       container.innerHTML = `<img src="${composedUrl}" alt="Slide ${num}" />`;
